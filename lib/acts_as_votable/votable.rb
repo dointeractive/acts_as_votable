@@ -11,7 +11,7 @@ module ActsAsVotable
       aliases = {
 
         :vote_up => [
-          :up_by, :upvote_by, :like_by, :liked_by, 
+          :up_by, :upvote_by, :like_by, :liked_by,
           :up_from, :upvote_from, :upvote_by, :like_from, :liked_from, :vote_from
         ],
 
@@ -79,7 +79,7 @@ module ActsAsVotable
       _votes_ = find_votes_for({
         :voter_id => options[:voter].id,
         :vote_scope => options[:vote_scope],
-        :voter_type => options[:voter].class.name
+        :voter_type => options[:voter].class.base_class.name
       })
 
       if _votes_.count == 0 or options[:duplicate]
@@ -114,7 +114,7 @@ module ActsAsVotable
 
     def unvote args = {}
       return false if args[:voter].nil?
-      _votes_ = find_votes_for(:voter_id => args[:voter].id, :vote_scope => args[:vote_scope], :voter_type => args[:voter].class.name)
+      _votes_ = find_votes_for(:voter_id => args[:voter].id, :vote_scope => args[:vote_scope], :voter_type => args[:voter].class.base_class.name)
 
       return true if _votes_.size == 0
       _votes_.each(&:destroy)
@@ -155,10 +155,18 @@ module ActsAsVotable
         "cached_scoped_#{vote_scope}_votes_score="
       when :cached_votes_score
         "cached_scoped_#{vote_scope}_votes_score"
+      when :cached_weighted_total
+        "cached_weighted_#{vote_scope}_total"
+      when :cached_weighted_total=
+        "cached_weighted_#{vote_scope}_total="
       when :cached_weighted_score
         "cached_weighted_#{vote_scope}_score"
       when :cached_weighted_score=
         "cached_weighted_#{vote_scope}_score="
+      when :cached_weighted_average
+        "cached_weighted_#{vote_scope}_average"
+      when :cached_weighted_average=
+        "cached_weighted_#{vote_scope}_average="
       end
     end
 
@@ -186,8 +194,16 @@ module ActsAsVotable
         )
       end
 
+      if self.respond_to?(:cached_weighted_total=)
+        updates[:cached_weighted_total] = weighted_total(true)
+      end
+
       if self.respond_to?(:cached_weighted_score=)
         updates[:cached_weighted_score] = weighted_score(true)
+      end
+
+      if self.respond_to?(:cached_weighted_average=)
+        updates[:cached_weighted_average] = weighted_average(true)
       end
 
       if vote_scope
@@ -203,6 +219,10 @@ module ActsAsVotable
           updates[scope_cache_field :cached_votes_down, vote_scope] = count_votes_down(true, vote_scope)
         end
 
+        if self.respond_to?(scope_cache_field :cached_weighted_total=, vote_scope)
+          updates[scope_cache_field :cached_weighted_total, vote_scope] = weighted_total(true, vote_scope)
+        end
+
         if self.respond_to?(scope_cache_field :cached_weighted_score=, vote_scope)
           updates[scope_cache_field :cached_weighted_score, vote_scope] = weighted_score(true, vote_scope)
         end
@@ -212,6 +232,10 @@ module ActsAsVotable
             (updates[scope_cache_field :cached_votes_up, vote_scope] || count_votes_up(true, vote_scope)) -
             (updates[scope_cache_field :cached_votes_down, vote_scope] || count_votes_down(true, vote_scope))
           )
+        end
+
+        if self.respond_to?(scope_cache_field :cached_weighted_average=, vote_scope)
+          updates[scope_cache_field :cached_weighted_average, vote_scope] = weighted_average(true, vote_scope)
         end
       end
 
@@ -230,11 +254,13 @@ module ActsAsVotable
     end
 
     def get_up_votes options={}
-      find_votes_for(:vote_flag => true, :vote_scope => options[:vote_scope])
+      vote_scope_hash = scope_or_empty_hash(options[:vote_scope])
+      find_votes_for({:vote_flag => true}.merge(vote_scope_hash))
     end
 
     def get_down_votes options={}
-      find_votes_for(:vote_flag => false, :vote_scope => options[:vote_scope])
+      vote_scope_hash = scope_or_empty_hash(options[:vote_scope])
+      find_votes_for({:vote_flag => false}.merge(vote_scope_hash))
     end
 
 
@@ -243,7 +269,7 @@ module ActsAsVotable
       if !skip_cache && self.respond_to?(scope_cache_field :cached_votes_total, vote_scope)
         return self.send(scope_cache_field :cached_votes_total, vote_scope)
       end
-      find_votes_for(:vote_scope => vote_scope).count
+      find_votes_for(scope_or_empty_hash(vote_scope)).count
     end
 
     def count_votes_up skip_cache = false, vote_scope = nil
@@ -260,6 +286,15 @@ module ActsAsVotable
       get_down_votes(:vote_scope => vote_scope).count
     end
 
+    def weighted_total skip_cache = false, vote_scope = nil
+      if !skip_cache && self.respond_to?(scope_cache_field :cached_weighted_total, vote_scope)
+        return self.send(scope_cache_field :cached_weighted_total, vote_scope)
+      end
+      ups = get_up_votes(:vote_scope => vote_scope).sum(:vote_weight)
+      downs = get_down_votes(:vote_scope => vote_scope).sum(:vote_weight)
+      ups + downs
+    end
+
     def weighted_score skip_cache = false, vote_scope = nil
       if !skip_cache && self.respond_to?(scope_cache_field :cached_weighted_score, vote_scope)
         return self.send(scope_cache_field :cached_weighted_score, vote_scope)
@@ -269,11 +304,29 @@ module ActsAsVotable
       ups - downs
     end
 
+    def weighted_average skip_cache = false, vote_scope = nil
+      if !skip_cache && self.respond_to?(scope_cache_field :cached_weighted_average, vote_scope)
+        return self.send(scope_cache_field :cached_weighted_average, vote_scope)
+      end
+
+      count = count_votes_total(skip_cache, vote_scope).to_i
+      if count > 0
+        weighted_score(skip_cache, vote_scope).to_f / count
+      else
+        0.0
+      end
+    end
+
     # voters
     def voted_on_by? voter
-      votes = find_votes_for :voter_id => voter.id, :voter_type => voter.class.name
+      votes = find_votes_for :voter_id => voter.id, :voter_type => voter.class.base_class.name
       votes.count > 0
     end
 
+    private
+
+    def scope_or_empty_hash(vote_scope)
+      vote_scope ? { :vote_scope => vote_scope } : {}
+    end
   end
 end

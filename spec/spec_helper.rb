@@ -2,6 +2,7 @@ $LOAD_PATH << File.join(File.dirname(__FILE__), '..', 'lib')
 require 'sqlite3'
 require 'acts_as_votable'
 
+Dir["./spec/shared_example/**/*.rb"].sort.each {|f| require f}
 Dir["./spec/support/**/*.rb"].sort.each {|f| require f}
 
 ActiveRecord::Base.establish_connection(:adapter => "sqlite3", :database => ":memory:")
@@ -59,13 +60,17 @@ ActiveRecord::Schema.define(:version => 1) do
     t.integer :cached_votes_score
     t.integer :cached_votes_up
     t.integer :cached_votes_down
+    t.integer :cached_weighted_total
     t.integer :cached_weighted_score
+    t.float :cached_weighted_average
 
     t.integer :cached_scoped_test_votes_total
     t.integer :cached_scoped_test_votes_score
     t.integer :cached_scoped_test_votes_up
     t.integer :cached_scoped_test_votes_down
+    t.integer :cached_scoped_weighted_total
     t.integer :cached_scoped_weighted_score
+    t.float :cached_scoped_weighted_average
   end
 
 end

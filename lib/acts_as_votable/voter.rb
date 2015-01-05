@@ -107,7 +107,7 @@ module ActsAsVotable
     end
 
     def find_voted_items extra_conditions = {}
-      options = extra_conditions.merge :voter_id => id, :voter_type => self.class.name
+      options = extra_conditions.merge :voter_id => id, :voter_type => self.class.base_class.name
       include_objects.where(options).collect(&:votable)
     end
 
